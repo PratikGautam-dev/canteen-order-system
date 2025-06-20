@@ -1,4 +1,6 @@
 const Order = require('../models/Order');
+const MenuItem = require('../models/MenuItem');
+const mongoose = require('mongoose');
 
 exports.getAllOrders = async (req, res) => {
   try {
@@ -8,6 +10,107 @@ exports.getAllOrders = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
+
+exports.getOrder = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id)
+      .populate('user', 'name email')
+      .populate('items.menuItem');
+    
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+    
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+// --- Analytics Endpoints ---
+exports.getSalesStats = async (req, res) => {
+  try {
+    const totalOrders = await Order.countDocuments();
+    const totalRevenue = await Order.aggregate([
+      { $unwind: '$items' },
+      {
+        $lookup: {
+          from: 'menuitems',
+          localField: 'items.menuItem',
+          foreignField: '_id',
+          as: 'menuItemDetails',
+        },
+      },
+      { $unwind: '$menuItemDetails' },
+      {
+        $group: {
+          _id: null,
+          revenue: { $sum: { $multiply: ['$items.quantity', '$menuItemDetails.price'] } },
+        },
+      },
+    ]);
+    res.json({
+      totalOrders,
+      totalRevenue: totalRevenue[0] ? totalRevenue[0].revenue : 0,
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Error getting sales stats', error: err.message });
+  }
+};
+
+exports.getPopularItems = async (req, res) => {
+  try {
+    const popular = await Order.aggregate([
+      { $unwind: '$items' },
+      {
+        $group: {
+          _id: '$items.menuItem',
+          totalOrdered: { $sum: '$items.quantity' },
+        },
+      },
+      { $sort: { totalOrdered: -1 } },
+      { $limit: 5 },
+      {
+        $lookup: {
+          from: 'menuitems',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'menuItemDetails',
+        },
+      },
+      { $unwind: '$menuItemDetails' },
+      {
+        $project: {
+          _id: 0,
+          name: '$menuItemDetails.name',
+          totalOrdered: 1,
+        },
+      },
+    ]);
+    res.json(popular);
+  } catch (err) {
+    res.status(500).json({ message: 'Error getting popular items', error: err.message });
+  }
+};
+
+exports.getPeakOrderTimes = async (req, res) => {
+  try {
+    const peakTimes = await Order.aggregate([
+      {
+        $group: {
+          _id: { $hour: '$scheduledTime' },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { count: -1 } },
+      { $limit: 3 },
+    ]);
+    res.json(peakTimes);
+  } catch (err) {
+    res.status(500).json({ message: 'Error getting peak order times', error: err.message });
+  }
+};
+// --- End Analytics ---
 
 exports.createOrder = async (req, res) => {
   try {

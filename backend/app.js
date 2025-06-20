@@ -4,6 +4,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const http = require('http');
 const socketIo = require('socket.io');
+const fileUpload = require('express-fileupload');
 
 dotenv.config();
 
@@ -19,6 +20,16 @@ const io = socketIo(server, {
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// File upload middleware
+app.use(fileUpload({
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max-file-size
+    useTempFiles: true,
+    tempFileDir: '/tmp/',
+    createParentPath: true,
+    debug: process.env.NODE_ENV === 'development'
+}));
 
 // Routes
 app.use('/api/users', require('./routes/userRoutes'));
@@ -26,13 +37,30 @@ app.use('/api/menu', require('./routes/menuRoutes'));
 app.use('/api/orders', require('./routes/orderRoutes'));
 app.use('/api/messages', require('./routes/messageRoutes'));
 
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({
+        success: false,
+        message: 'Something went wrong!',
+        error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+});
+
 // MongoDB connection
-mongoose.connect(process.env.MONGO_URI, {
+mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+  retryWrites: true,
+  w: 'majority',
+  serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
+  socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
 })
-  .then(() => console.log('MongoDB connected'))
-  .catch((err) => console.error('MongoDB connection error:', err));
+.then(() => console.log('MongoDB Atlas connected successfully'))
+.catch((err) => {
+  console.error('MongoDB Atlas connection error:', err);
+  process.exit(1); // Exit if we can't connect to the database
+});
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
@@ -71,4 +99,6 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`)); 
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+module.exports = app; 
